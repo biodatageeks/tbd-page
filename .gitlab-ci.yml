@@ -1,0 +1,114 @@
+stages:
+  - version
+  - page-build
+  - page-serve
+
+variables:
+  GIT_SUBMODULE_STRATEGY: recursive
+  VERSION_FILE: version.sh
+  GIT_DEPTH: 500
+  KUBERNETES_VERSION: 1.19.1
+  DOCKER_VERSION: 19.03.12
+  DOC_PORT_PREFIX: 12
+  HUGO_VERSION: 0.79.1-ext-ubuntu
+  HUGO_ENV: production
+  PAGE_URL: tbd.ii.pw.edu.pl
+
+.publishSnapshotVar: &publishSnapshotVar
+  PYPI_REPO: "zsibio"
+  DOC_URL_PREFIX: "https://$PAGE_URL/snapshot"
+  VERSIONED: "true"
+
+.publishReleaseVar: &publishReleaseVar
+  PYPI_REPO: "pypi"
+  DOC_URL_PREFIX: "https://$PAGE_URL"
+  VERSIONED: "true"
+
+.publishMasterVar: &publishMasterVar
+  PYPI_REPO: "pypi"
+  DOC_URL_PREFIX: "https://$PAGE_URL"
+  VERSIONED: "false"
+
+# --------------------------------- STAGE: version ---------------------------------------------------------------------
+version-branch:
+  stage: version
+  image:
+    name: mdomke/git-semver:v4.0.1
+    entrypoint: [""]
+  script:
+    - cd /builds/$CI_PROJECT_NAMESPACE/$CI_PROJECT_NAME && git-semver --format x.y.z+m | sed -e 's/$/-SNAPSHOT/g' | xargs -I {} echo "export VERSION={}" > $VERSION_FILE
+    - cat $VERSION_FILE
+  artifacts:
+    paths:
+      - $VERSION_FILE
+  tags: [ docker ]
+  except: [ master, tags ]
+
+version-tag:
+  stage: version
+  image:
+    name: mdomke/git-semver:v4.0.1
+    entrypoint: [""]
+  script:
+    - cd /builds/$CI_PROJECT_NAMESPACE/$CI_PROJECT_NAME && git-semver --no-hash --no-pre | xargs -I {} echo "export VERSION={}" > $VERSION_FILE
+    - cat $VERSION_FILE
+  artifacts:
+    paths:
+      - $VERSION_FILE
+  tags: [ docker ]
+  except:
+    - branches
+
+.page-build: &page-build
+  stage: page-build
+  image:
+    name: klakegg/hugo:$HUGO_VERSION
+    entrypoint: [""]
+  before_script:
+    - apt update && apt-get install -y gettext
+  script:
+    - hugo --enableGitInfo=false  --baseURL $DOC_URL_PREFIX
+  artifacts:
+    paths:
+      - /builds/$CI_PROJECT_NAMESPACE/$CI_PROJECT_NAME/public/
+  tags: [ docker ]
+
+page-buildSnapshot:
+  variables:
+    <<: *publishSnapshotVar
+  <<: *page-build
+  except: [ master, tags ]
+
+page-buildRelease:
+  variables:
+    <<: *publishReleaseVar
+  <<: *page-build
+  only:
+    - tags
+
+page-buildMaster:
+  variables:
+    <<: *publishMasterVar
+  <<: *page-build
+  only:
+    - master
+
+page-serve:
+  stage: page-serve
+  image:
+    name: docker:$DOCKER_VERSION
+  before_script:
+    - source $VERSION_FILE
+  script:
+    - ./build_image.sh "tbd" 85 84
+  tags: [ docker ]
+  except: [ master]
+
+page-serve-master:
+  stage: page-serve
+  image:
+    name: docker:$DOCKER_VERSION
+  script:
+    - ./build_image.sh "tbd" 85 84
+  tags: [ docker ]
+  only: [ master ]
